@@ -2,6 +2,7 @@ import type { NextAuthConfig } from "next-auth";
 import type { PermissionCode } from "@/types/permissions";
 
 export const authConfig = {
+  trustHost: true, // wajib di Vercel/proxy: agar NextAuth pakai host dari request, bukan fallback ke localhost
   session: {
     strategy: "jwt",
     maxAge: Number(process.env.AUTH_SESSION_MAX_AGE ?? 2592000),
