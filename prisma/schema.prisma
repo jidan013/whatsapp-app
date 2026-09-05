@@ -1,0 +1,518 @@
+// ==============================================================================
+// WHATSAPP AGENDA & WORK MANAGEMENT SYSTEM - DATABASE SCHEMA
+// PostgreSQL + Prisma ORM
+// Conventions: UUID primary keys, soft delete (deletedAt), audit timestamps,
+// normalized to 3NF, indexes on all foreign keys and frequently filtered columns.
+// ==============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+// ------------------------------------------------------------------------------
+// ENUMS
+// ------------------------------------------------------------------------------
+
+enum AgendaPriority {
+  RENDAH
+  SEDANG
+  TINGGI
+  URGENT
+}
+
+enum AgendaSourceChannel {
+  WEB
+  WHATSAPP
+  API
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+enum NotificationChannel {
+  WEB
+  WHATSAPP
+  EMAIL
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+enum ExportFormat {
+  PDF
+  EXCEL
+  CSV
+}
+
+enum ExportStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum BackupStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum BackupType {
+  FULL
+  DATABASE_ONLY
+  FILES_ONLY
+}
+
+enum ActivityAction {
+  LOGIN
+  LOGOUT
+  CREATE
+  UPDATE
+  DELETE
+  RESTORE
+  UPLOAD
+  DOWNLOAD
+  EXPORT
+  BACKUP
+  BACKUP_RESTORE
+  GOOGLE_DRIVE_SYNC
+  WHATSAPP_COMMAND
+  API_ERROR
+  SYSTEM_ERROR
+  PERMISSION_DENIED
+}
+
+enum GoogleDriveFileCategory {
+  AGENDA_MEDIA
+  EXPORT
+  BACKUP
+}
+
+// ------------------------------------------------------------------------------
+// AUTH & RBAC
+// ------------------------------------------------------------------------------
+
+model User {
+  id                String    @id @default(uuid()) @db.Uuid
+  name              String
+  email             String    @unique
+  emailVerified     DateTime?
+  passwordHash      String
+  phoneNumber       String?   @unique
+  avatarUrl         String?
+  isActive          Boolean   @default(true)
+  departmentId      String?   @db.Uuid
+  lastLoginAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  department        Department?     @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  userRoles         UserRole[]
+  technician        Technician?
+  sessions          Session[]
+  agendaCreated     Agenda[]        @relation("AgendaCreatedBy")
+  agendaAssigned    Agenda[]        @relation("AgendaAssignedTo")
+  comments          Comment[]
+  notifications     Notification[]
+  activityLogs      ActivityLog[]
+  exports           Export[]
+  backupLogsTrigger BackupLog[]
+
+  @@index([departmentId])
+  @@index([deletedAt])
+  @@index([email])
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique // ADMIN, SUPERVISOR, TECHNICIAN, OPERATOR
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@index([deletedAt])
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique // e.g. "agenda:create", "agenda:delete", "users:manage"
+  description String?
+  resource    String // e.g. "agenda", "users", "backup"
+  action      String // e.g. "create", "read", "update", "delete", "export"
+  createdAt   DateTime @default(now())
+
+  rolePermissions RolePermission[]
+
+  @@index([resource])
+  @@map("permissions")
+}
+
+model UserRole {
+  id       String   @id @default(uuid()) @db.Uuid
+  userId   String   @db.Uuid
+  roleId   String   @db.Uuid
+  assignedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  id           String @id @default(uuid()) @db.Uuid
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model Session {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  sessionToken String   @unique
+  ipAddress    String?
+  userAgent    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ------------------------------------------------------------------------------
+// ORGANIZATION
+// ------------------------------------------------------------------------------
+
+model Department {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  users        User[]
+  technicians  Technician[]
+  agenda       Agenda[]
+
+  @@index([deletedAt])
+  @@map("departments")
+}
+
+model Technician {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @unique @db.Uuid
+  employeeCode String   @unique
+  departmentId String?  @db.Uuid
+  specialization String?
+  phoneNumber  String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  agenda     Agenda[]
+
+  @@index([departmentId])
+  @@index([deletedAt])
+  @@map("technicians")
+}
+
+// ------------------------------------------------------------------------------
+// AGENDA (CORE DOMAIN)
+// ------------------------------------------------------------------------------
+
+model AgendaCategory {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique
+  description String?
+  colorHex    String   @default("#6366F1")
+  icon        String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  agenda Agenda[]
+
+  @@index([deletedAt])
+  @@map("agenda_categories")
+}
+
+model AgendaStatus {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique // e.g. "Pending", "In Progress", "Completed", "Cancelled"
+  code        String   @unique // e.g. "PENDING", "IN_PROGRESS", "COMPLETED", "CANCELLED"
+  colorHex    String   @default("#6B7280")
+  isTerminal  Boolean  @default(false) // marks a "final" state e.g. Completed/Cancelled
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  agenda Agenda[]
+
+  @@map("agenda_status")
+}
+
+model Agenda {
+  id             String              @id @default(uuid()) @db.Uuid
+  title          String
+  description    String
+  location       String?
+  scheduledDate  DateTime            @db.Date
+  scheduledTime  String?
+  scheduledEndDate DateTime?         @db.Date
+  scheduledEndTime String? // stored as HH:mm, validated at application layer
+  priority       AgendaPriority      @default(SEDANG)
+  sourceChannel  AgendaSourceChannel @default(WEB)
+  notes          String?
+
+  categoryId     String   @db.Uuid
+  statusId       String   @db.Uuid
+  departmentId   String?  @db.Uuid
+  technicianId   String?  @db.Uuid
+  createdById    String   @db.Uuid
+  assignedToId   String?  @db.Uuid
+
+  completedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+
+  category    AgendaCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  status      AgendaStatus   @relation(fields: [statusId], references: [id], onDelete: Restrict)
+  department  Department?    @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  technician  Technician?    @relation(fields: [technicianId], references: [id], onDelete: SetNull)
+  createdBy   User           @relation("AgendaCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  assignedTo  User?          @relation("AgendaAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  media          AgendaMedia[]
+  comments       Comment[]
+  notifications  Notification[]
+
+  @@index([categoryId])
+  @@index([statusId])
+  @@index([departmentId])
+  @@index([technicianId])
+  @@index([createdById])
+  @@index([assignedToId])
+  @@index([scheduledDate])
+  @@index([deletedAt])
+  @@index([scheduledDate, statusId])
+  @@map("agenda")
+}
+
+model AgendaMedia {
+  id              String    @id @default(uuid()) @db.Uuid
+  agendaId        String    @db.Uuid
+  type            MediaType
+  fileName        String
+  originalName    String
+  mimeType        String
+  sizeBytes       Int
+  checksum        String
+  localPath       String?
+  googleDriveFileId String? @db.Uuid
+  uploadedById    String    @db.Uuid
+  createdAt       DateTime  @default(now())
+  deletedAt       DateTime?
+
+  agenda          Agenda @relation(fields: [agendaId], references: [id], onDelete: Cascade)
+  googleDriveFile GoogleDriveFile? @relation(fields: [googleDriveFileId], references: [id], onDelete: SetNull)
+
+  @@index([agendaId])
+  @@index([googleDriveFileId])
+  @@index([deletedAt])
+  @@map("agenda_media")
+}
+
+model Comment {
+  id        String   @id @default(uuid()) @db.Uuid
+  agendaId  String   @db.Uuid
+  userId    String   @db.Uuid
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  agenda Agenda @relation(fields: [agendaId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([agendaId])
+  @@index([userId])
+  @@map("comments")
+}
+
+// ------------------------------------------------------------------------------
+// NOTIFICATIONS
+// ------------------------------------------------------------------------------
+
+model Notification {
+  id        String               @id @default(uuid()) @db.Uuid
+  userId    String               @db.Uuid
+  agendaId  String?              @db.Uuid
+  channel   NotificationChannel
+  title     String
+  message   String
+  status    NotificationStatus   @default(PENDING)
+  sentAt    DateTime?
+  readAt    DateTime?
+  errorMessage String?
+  createdAt DateTime             @default(now())
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agenda Agenda? @relation(fields: [agendaId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([agendaId])
+  @@index([status])
+  @@map("notifications")
+}
+
+// ------------------------------------------------------------------------------
+// EXPORT / BACKUP / GOOGLE DRIVE
+// ------------------------------------------------------------------------------
+
+model Export {
+  id              String       @id @default(uuid()) @db.Uuid
+  requestedById   String       @db.Uuid
+  format          ExportFormat
+  status          ExportStatus @default(QUEUED)
+  filters         Json // { dateFrom, dateTo, categoryId, statusId, technicianId, departmentId, location }
+  filePath        String?
+  googleDriveFileId String? @db.Uuid
+  errorMessage    String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime     @default(now())
+
+  requestedBy     User             @relation(fields: [requestedById], references: [id], onDelete: Cascade)
+  googleDriveFile GoogleDriveFile? @relation(fields: [googleDriveFileId], references: [id], onDelete: SetNull)
+
+  @@index([requestedById])
+  @@index([status])
+  @@index([googleDriveFileId])
+  @@map("exports")
+}
+
+model BackupLog {
+  id                String       @id @default(uuid()) @db.Uuid
+  type              BackupType
+  status            BackupStatus @default(QUEUED)
+  triggeredById     String?      @db.Uuid
+  isAutomatic       Boolean      @default(true)
+  filePath          String?
+  fileSizeBytes     Int?
+  checksum          String?
+  isEncrypted       Boolean      @default(true)
+  googleDriveFileId String? @db.Uuid
+  errorMessage      String?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime     @default(now())
+
+  triggeredBy     User?            @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
+  googleDriveFile GoogleDriveFile? @relation(fields: [googleDriveFileId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([triggeredById])
+  @@index([googleDriveFileId])
+  @@index([createdAt])
+  @@map("backup_logs")
+}
+
+model GoogleDriveFile {
+  id           String                  @id @default(uuid()) @db.Uuid
+  driveFileId  String                  @unique
+  driveUrl     String
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  checksum     String
+  category     GoogleDriveFileCategory
+  parentFolderId String?
+  driveCreatedTime DateTime
+  createdAt    DateTime                @default(now())
+  deletedAt    DateTime?
+
+  agendaMedia AgendaMedia[]
+  exports     Export[]
+  backupLogs  BackupLog[]
+
+  @@index([category])
+  @@index([deletedAt])
+  @@map("google_drive_files")
+}
+
+// ------------------------------------------------------------------------------
+// SYSTEM
+// ------------------------------------------------------------------------------
+
+model ActivityLog {
+  id         String         @id @default(uuid()) @db.Uuid
+  userId     String?        @db.Uuid
+  action     ActivityAction
+  entityType String? // e.g. "Agenda", "User", "Export"
+  entityId   String?        @db.Uuid
+  description String
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime       @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+model Setting {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String   @unique
+  value     Json
+  category  String   @default("general") 
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@map("settings")
+}
