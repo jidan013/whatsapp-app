@@ -15,6 +15,9 @@ export const metadata: Metadata = {
   },
   description: "Enterprise WhatsApp Work Management System",
   manifest: "/manifest.json",
+  verification: {
+    google: "FPsg59zGmeHRdp1m5JAGUlDrbMA5otLUSkVDhtN0kFg",
+  },
 };
 
 export const viewport: Viewport = {
