@@ -114,6 +114,7 @@ const config = [
       // di-lint karena memang bagian dari tsconfig.json.
       "*.config.js",
       "*.config.mjs",
+      "next-env.d.ts",
     ],
   },
 ];
